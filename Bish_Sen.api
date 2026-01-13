@@ -1,0 +1,103 @@
+#deploying the model which is Bish_Sen"""
+BishSen ML API - Flask REST API for Model Deployment
+Author: Bish Sen
+"""
+
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+import joblib
+import numpy as np
+import pandas as pd
+
+app = Flask(__name__)
+CORS(app)
+
+# Load model at startup
+MODEL_FILE = 'bishsen_churn_model.pkl'
+model_package = None
+
+try:
+    model_package = joblib.load(MODEL_FILE)
+    print(f"✓ Model loaded successfully: {MODEL_FILE}")
+except:
+    print("⚠ Warning: Model file not found. Run main.py first to train the model.")
+
+@app.route('/')
+def home():
+    """API home page"""
+    return jsonify({
+        'project': 'BishSen ML - Customer Churn Prediction',
+        'author': 'Bish Sen',
+        'version': '1.0',
+        'status': 'active',
+        'endpoints': {
+            '/predict': 'POST - Make predictions',
+            '/health': 'GET - Check API health',
+            '/model-info': 'GET - Get model information'
+        }
+    })
+
+@app.route('/health')
+def health():
+    """Health check endpoint"""
+    return jsonify({
+        'status': 'healthy',
+        'model_loaded': model_package is not None
+    })
+
+@app.route('/model-info')
+def model_info():
+    """Get model information"""
+    if model_package is None:
+        return jsonify({'error': 'Model not loaded'}), 500
+    
+    return jsonify({
+        'version': model_package.get('version', 'unknown'),
+        'author': model_package.get('author', 'unknown'),
+        'model_type': str(type(model_package['model']).__name__)
+    })
+
+@app.route('/predict', methods=['POST'])
+def predict():
+    """Make churn prediction"""
+    if model_package is None:
+        return jsonify({'error': 'Model not loaded'}), 500
+    
+    try:
+        # Get data from request
+        data = request.get_json()
+        
+        # Convert to DataFrame
+        df = pd.DataFrame([data])
+        
+        # Required features (must match training data)
+        required_features = [
+            'age', 'gender', 'tenure_months', 'monthly_charges',
+            'total_charges', 'contract_type', 'payment_method',
+            'internet_service', 'online_security', 'tech_support',
+            'num_services', 'customer_service_calls'
+        ]
+        
+        # Scale features
+        scaler = model_package['scaler']
+        model = model_package['model']
+        
+        # Make prediction
+        X_scaled = scaler.transform(df)
+        prediction = model.predict(X_scaled)[0]
+        probability = model.predict_proba(X_scaled)[0]
+        
+        result = {
+            'prediction': 'CHURN' if prediction == 1 else 'NO CHURN',
+            'churn_probability': float(probability[1]),
+            'retention_probability': float(probability[0]),
+            'risk_level': 'HIGH' if probability[1] > 0.7 else 'MEDIUM' if probability[1] > 0.4 else 'LOW'
+        }
+        
+        return jsonify(result)
+    
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000, debug=True)
